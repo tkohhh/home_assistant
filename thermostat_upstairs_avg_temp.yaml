@@ -1,0 +1,127 @@
+sensor:
+  - platform: template
+    sensors:
+      uat_hvac_set_temp:
+        friendly_name: UAT HVAC Set Temp
+        unit_of_measurement: 'ºF'
+        value_template: >-
+          {% if is_state('climate.upstairs','cool')
+            and
+            is_state('group.trackedpeople','home') %}
+              {{ states('input_number.uat_cool_set_temp') | float }}
+          {% elif is_state('climate.upstairs','heat') 
+            and
+            is_state('group.trackedpeople','home') %}
+              {{ states('input_number.uat_heat_set_temp') | float }}
+          {% elif is_state('climate.upstairs','cool') 
+            and
+            is_state('group.trackedpeople','not_home') %}
+              {{ states('input_number.cool_away_temp_in') | float }}
+          {% elif is_state('climate.upstairs','heat') 
+            and
+            is_state('group.trackedpeople','not_home') %}
+              {{ states('input_number.heat_away_temp_in') | float }}
+          {% endif %}
+      uat_hvac_activation_temp:
+        friendly_name: UAT HVAC Activation Temp
+        unit_of_measurement: 'ºF'
+        value_template: >-
+          {% if is_state('climate.upstairs','cool') %}
+            {{ states('sensor.uat_hvac_set_temp') | float 
+               + 
+               states('input_number.therm_temp_diff_in') | float }}
+          {% elif is_state('climate.upstairs','heat') %}
+            {{ states('sensor.uat_hvac_set_temp') | float 
+               - 
+               states('input_number.therm_temp_diff_in') | float }}
+          {% endif %}
+
+#binary_sensor:
+
+    
+input_number:
+  uat_cool_set_temp:
+    name: UAT Cool Set Temp
+    mode: slider
+    unit_of_measurement: 'ºF'
+    min: 65
+    max: 95
+  uat_heat_set_temp:
+    name: UAT Heat Set Temp
+    mode: slider
+    unit_of_measurement: 'ºF'
+    min: 55
+    max: 75
+
+#script:
+
+
+automation:
+  - id: '20201228-0940'
+    alias: UAT_Activate_HVAC
+    trigger: 
+    - platform: template
+      value_template: >-
+        {% if is_state('climate.upstairs','cool') 
+              and 
+              not(is_state_attr('climate.upstairs','hvac_action','cooling')) %}
+          {{ states('sensor.upstairs_avg_temp') | float > states('sensor.UAT_HVAC_Activation_Temp') | float }}
+        {% elif is_state('climate.upstairs','heat')
+                and
+                not(is_state_attr('climate.upstairs','hvac_action','heating')) %}
+          {{ states('sensor.upstairs_avg_temp') | float < states('sensor.UAT_HVAC_Activation_Temp') | float }}
+        {% endif %}
+    condition:
+    - condition: state
+      entity_id: climate.upstairs
+      state: 
+        - 'cool'
+        - 'heat'
+    - condition: template
+      value_template: >-
+        {{ not (is_state_attr('climate.upstairs','hvac_action','cooling')
+               or
+               is_state_attr('climate.upstairs','hvac_action','heating')) }}
+    action:
+    - service: climate.set_temperature
+      data_template:
+        entity_id: climate.upstairs
+        temperature: >-
+          {% if is_state('climate.upstairs','cool') %}
+            {{ state_attr('climate.upstairs','current_temperature') - 4 |round(0,'floor')|int }}
+          {% elif is_state('climate.upstairs','heat') %}
+            {{ state_attr('climate.upstairs','current_temperature') + 4 |round(0,'ceil')|int }}
+          {% endif %}
+    - service: homeassistant.turn_on
+      data:
+        entity_id: automation.UAT_Deactivate_HVAC
+
+  - id: '20201228-1008'
+    alias: UAT_Deactivate_HVAC
+    trigger: 
+    - platform: template
+      value_template: >-
+        {% if is_state('climate.upstairs','cool') %}
+          {{ states('sensor.upstairs_avg_temp') | float < states('sensor.uat_hvac_set_temp') | float }}
+        {% elif is_state('climate.upstairs','heat') %}
+          {{ states('sensor.upstairs_avg_temp') | float > states('sensor.uat_hvac_set_temp') | float }}
+        {% endif %}
+    condition:
+    - condition: state
+      entity_id: climate.upstairs
+      state: 
+        - 'cool'
+        - 'heat'
+    action: 
+    - service: climate.set_temperature
+      data_template:
+        entity_id: climate.upstairs
+        temperature: >-
+          {% if is_state('climate.upstairs','cool') %}
+            {{ states('input_number.cool_away_temp_in') }}
+          {% elif is_state('climate.upstairs','heat') %}
+            {{ states('input_number.heat_away_temp_in') }}
+          {% endif %}
+    - service: homeassistant.turn_off
+      data:
+        entity_id: automation.UAT_Deactivate_HVAC
